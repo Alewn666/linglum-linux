@@ -7,7 +7,7 @@
 
 > 一张能独立启动的 Live ISO：UEFI → GRUB → 自编译 Linux 7.3 内核 → 自研 init（PID 1）→ BusyBox 用户态。开机后屏幕 `tty1` 和串口 `ttyAMA0` 各有一个 shell，直接就是一台能用的 aarch64 系统。
 
-这不是「在某个 Linux 发行版上装几个软件」，而是从内核 `defconfig` 开始自己攒出来的一套操作系统：显示、串口、磁盘、USB、网络驱动全部内建进内核（不靠模块），initramfs 里放自研 `init` 和 BusyBox，最后打成 UEFI 可引导的 ISO。
+这不是「在某个 Linux 发行版上装几个软件」，而是从内核 `defconfig` 开始自己攒出来的一套操作系统：当前 `build.sh` 直接 `--disable MODULES`，把显示（efidrm / fbcon）、PL011 串口、xHCI + USB HID、virtio 磁盘与网卡全部内建，initramfs 里放自研 `init` 和 BusyBox，最后打成 UEFI 可引导的 ISO。
 
 和 [loongos](https://github.com/Alewn666/loongos) 是同一个「灵珑系统」的两条技术路线：那条连内核一起自己写，这条用 Linux 内核把自己做成一个完整可用的系统。两条路线各自独立，互不替代。
 
@@ -34,7 +34,7 @@ sh build.sh                 # 产物 out/linux.iso
 
 它依次做：
 
-1. `make defconfig` 后逐项打开所需特性——EFI / EFI_STUB / ACPI、EFI GOP → efidrm / simpledrm → fbcon、串口控制台、virtio 磁盘与网卡，**全部内建**（`=y`），避免 initramfs 里再塞模块。
+1. `make defconfig` 后逐项打开所需特性——EFI / EFI_STUB / ACPI、EFI GOP → efidrm / simpledrm → fbcon、串口控制台、virtio 磁盘与网卡，再用 `--disable MODULES` 关掉模块支持，让它们**全部内建**（`=y`）。
 2. 编译内核、准备 `rootfs/`（自研 `init`、`fstab`、`passwd`、`profile`、`motd`、`udhcpc.script`、BusyBox 与 `install-*`）。
 3. 打 initramfs、组 ISO、装 GRUB UEFI 引导。
 
@@ -66,7 +66,7 @@ linglum-linux/
     ├── install-loongos.sh       # 把 LoongOS 写进硬盘
     ├── install-linglum.sh       # 安装本系统
     ├── install/mkinstaller.sh   # 安装向导
-    ├── rootfs/                  # 完整用户态骨架（bin / etc / lib/modules / …）
+    ├── rootfs/                  # 完整用户态骨架（lib/modules 里是早期遗留的 .ko）
     ├── penguin/boot/            # 预编内核 Image.gz
     ├── test_*.py                # 冒烟 / ISO / 网络 / 安装 / 端到端验收
     ├── diag_*.py probe_net.py   # 排障工具
@@ -82,6 +82,7 @@ linglum-linux/
 | 菜单 / motd 中文变方块 | GRUB 与内核 fbcon 都没有中文字形，所以这两处用英文 |
 | `mkdir rootfs/{bin,sbin}` 造出字面量目录 | `/bin/sh` 是 dash，不支持花括号展开 |
 | ISO 属主突然变成 `libvirt-qemu` | libvirt 挂载时自动 chown，属正常现象 |
+| `rootfs/` 里还有 `.ko` 和 `insmod`，内核却禁用了模块 | 早期 `CONFIG_VIRTIO_NET=m` 版本的遗留：`rootfs/lib/modules/` 下三个 `.ko` 与 `init` 里的 `modprobe` / `insmod` 兜底循环没删干净，**当前构建下不会生效**。构建以 `build.sh` 为准 |
 
 ## 说明与边界
 
