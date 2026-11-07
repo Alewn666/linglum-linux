@@ -1,0 +1,4 @@
+export PATH=/bin:/sbin
+export PS1='\033[1;36mlinglong\033[0m \w # '
+alias ll='ls -l'
+alias la='ls -la'

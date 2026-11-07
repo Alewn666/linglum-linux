@@ -1,0 +1,87 @@
+#!/bin/busybox sh
+# 灵珑系统 | Linglong Linux —— PID 1
+export PATH=/bin:/sbin
+/bin/busybox --install -s /bin
+/bin/busybox --install -s /sbin
+
+mount -t proc   proc   /proc  2>/dev/null
+mount -t sysfs  sysfs  /sys   2>/dev/null
+mount -t devtmpfs devtmpfs /dev 2>/dev/null
+mkdir -p /dev/pts && mount -t devpts devpts /dev/pts 2>/dev/null
+
+[ -x /bin/hostname ] && hostname -F /etc/hostname 2>/dev/null
+
+# ---- 双模式：Live（initramfs/tmpfs）vs 装机（ext4 根分区）----
+# 同一个 /init 同时服务两种启动方式：
+#   Live   = GRUB 从光盘加载 kernel+initrd，root 是 initramfs，/linglum 与 /loongos 装机素材在
+#   装机   = GRUB 从 ext4 加载 kernel（无 initrd），内核直接挂 ext4 根分区、跑 /init，无装机素材
+# 判据：/linglum 目录只在 Live initramfs 里（mkinstaller 构建装机根时已剔除）。
+if [ -d /linglum ]; then
+    BOOTMODE=live
+else
+    BOOTMODE=disk
+fi
+echo "linglum boot mode: $BOOTMODE" > /dev/kmsg 2>/dev/null
+
+# ---- LoongOS/Linglum 安装素材：仅 Live 模式才有，缺失只提示不报错 ----
+if [ "$BOOTMODE" = "live" ]; then
+    if [ -f /loongos/disk.img.gz ]; then
+        echo "install image ready: /loongos/disk.img.gz" > /dev/kmsg 2>/dev/null
+    else
+        echo "WARN: /loongos/disk.img.gz missing (install-loongos will fail)" > /dev/kmsg 2>/dev/null
+    fi
+    if [ -f /linglum/linglum.img.gz ]; then
+        echo "install image ready: /linglum/linglum.img.gz" > /dev/kmsg 2>/dev/null
+    else
+        echo "WARN: /linglum/linglum.img.gz missing (install-linglum will fail)" > /dev/kmsg 2>/dev/null
+    fi
+fi
+
+
+# 真机屏幕键盘（用户虚拟机是 usb-kbd → 需要 xHCI + USB HID）
+for m in xhci-hcd xhci-pci usbhid hid-generic virtio_pci virtio_blk virtio_net; do
+    modprobe "$m" 2>/dev/null
+done
+
+# ⚠️ CONFIG_VIRTIO_NET=m：驱动是模块，而 Live 里没有 /lib/modules 的 depmod 树，
+# 所以直接 insmod 平铺放好的 .ko（顺序：failover → net_failover → virtio_net）
+for k in failover net_failover virtio_net; do
+    [ -f /lib/modules/$k.ko ] && insmod /lib/modules/$k.ko 2>/dev/null
+done
+
+# —— 网络：回环 + DHCP（2026-10-29 用户要求"起码先能获取到 IP"）——
+# 有界超时 3次×2秒：拿不到 IP 也不卡启动；拿到租约即退出（装机盘不守护续租）。
+# netmsg 同时写屏和串口（用户虚拟机没有串口控制台，看的是屏幕）。
+netmsg() { echo "$1" > /dev/tty1 2>/dev/null; echo "$1" > /dev/ttyAMA0 2>/dev/null; echo "$1"; }
+ifconfig lo 127.0.0.1 up 2>/dev/null
+NETIF=""
+for n in /sys/class/net/*; do
+    b=${n##*/}
+    [ "$b" = "lo" ] && continue
+    NETIF=$b
+    break
+done
+if [ -n "$NETIF" ]; then
+    ifconfig "$NETIF" up 2>/dev/null
+    netmsg "[net] DHCP 获取 IP 中（$NETIF）..."
+    if udhcpc -i "$NETIF" -s /etc/udhcpc.script -n -q -t 3 -T 2; then
+        netmsg "[net] $NETIF 已联网：$(ifconfig "$NETIF" | grep 'inet addr')"
+    else
+        netmsg "[net] $NETIF 未拿到 IP（没插网线/无 DHCP 服务器？）——继续启动"
+    fi
+else
+    netmsg "[net] 没有发现网卡"
+fi
+
+# 横幅：屏幕和串口各打一份（/dev/console 只有一个，不能只靠 cat motd）
+[ -c /dev/tty1 ] && cat /etc/motd > /dev/tty1 2>/dev/null
+[ -c /dev/ttyAMA0 ] && cat /etc/motd > /dev/ttyAMA0 2>/dev/null
+
+# 串口控制台 + 屏幕控制台各拉一个 shell；退出自动重开
+[ -c /dev/ttyAMA0 ] && while true; do setsid sh -c 'exec sh </dev/ttyAMA0 >/dev/ttyAMA0 2>&1'; sleep 1; done &
+[ -c /dev/tty1 ]    && while true; do setsid sh -c 'exec sh </dev/tty1 >/dev/tty1 2>&1';    sleep 1; done &
+
+if [ ! -c /dev/ttyAMA0 ] && [ ! -c /dev/tty1 ]; then
+    exec sh
+fi
+wait

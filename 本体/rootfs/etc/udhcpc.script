@@ -1,0 +1,26 @@
+#!/bin/busybox sh
+# BusyBox udhcpc 租约应用脚本 —— 由 udhcpc 在 bound/renew/deconfig 时调用
+# 环境变量：$interface $ip $subnet $router $dns $domain
+case "$1" in
+bound|renew)
+    # 1) 配 IP + 掩码
+    ifconfig "$interface" "$ip" netmask "$subnet" 2>/dev/null || ifconfig "$interface" "$ip"
+    # 2) 默认路由（renew 时先删旧的，避免重复添加报错）
+    if [ -n "$router" ]; then
+        route del default 2>/dev/null
+        route add default gw "${router%% *}" dev "$interface" 2>/dev/null
+    fi
+    # 3) DNS
+    if [ -n "$dns" ]; then
+        echo "search ${domain:-lan}" > /etc/resolv.conf
+        for d in $dns; do
+            echo "nameserver $d" >> /etc/resolv.conf
+        done
+    fi
+    echo "[net] $1: $interface 拿到 IP=$ip 掩码=$subnet 网关=${router:-无} DNS=${dns:-无}"
+    ;;
+deconfig)
+    ifconfig "$interface" 0.0.0.0 2>/dev/null
+    ;;
+esac
+exit 0

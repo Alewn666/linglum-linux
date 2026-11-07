@@ -1,0 +1,10 @@
+=========================================================
+  Linglum Linux 7.3  —  Linglong OS (Linux kernel edition)
+  灵珑系统 | Linux 内核版
+=========================================================
+  Kernel  : Linux 7.3.0-rc7 aarch64 (prebuilt)
+  Userland: BusyBox + Linglum init
+  Shells  : screen=tty1   serial=ttyAMA0
+  Install : run  install-loongos  (guided wizard, installs LoongOS)
+=========================================================
+
